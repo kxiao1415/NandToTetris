@@ -39,5 +39,36 @@ CHIP CPU {
         pc[15];          // address of next instruction
 
     PARTS:
-    // Put your code here:
+    // check A or C instruction
+    Not(in=instruction[15], out=n15);
+   
+    // ARegister
+    Mux16(a=ALUoutMux, b=instruction, sel=n15, out=inAReg);
+    Or(a=n15, b=instruction[5], out=loadA);
+    ARegister(in=inAReg, load=loadA, out=outARegMux, out=outARegPC, out[0..14]=addressM);
+    
+    // select AReg or M base on the 'a' bit
+    Mux16(a=outARegMux, b=inM, sel=instruction[12], out=AM);
+    
+    // DRegister
+    And(a=instruction[15], b=instruction[4], out=loadD);
+    DRegister(in=ALUoutD, load=loadD, out=D);
+   
+    // input from instruction, DRegister and AM
+    ALU(x=D, y=AM, zx=instruction[11], nx=instruction[10], zy=instruction[9], ny=instruction[8], f=instruction[7], no=instruction[6], out=ALUoutMux, out=ALUoutD, out=outM, zr=zr, ng=ng);
+
+    // writeM if it is C-instruction and 'd3' bit is set
+    And(a=instruction[15], b=instruction[3], out=writeM);
+
+    // program counter
+    Or(a=zr, b=ng, out=ngrt); // ngrt means <= 0
+    Not(in=ngrt, out=grt);  // grt means > 0
+    And(a=grt, b=instruction[0], out=jgt);
+    And(a=zr, b=instruction[1], out=jeq);
+    And(a=ng, b=instruction[2], out=jlt);
+    Or(a=jgt, b=jeq, out=jmp1);
+    Or(a=jmp1, b=jlt, out=jmp2);
+    And(a=instruction[15], b=jmp2, out=jmp);
+    Not(in=jmp, out=inc); // increment the counter if no jump
+    PC(reset=reset, load=jmp, in=outARegPC, inc=inc, out[0..14]=pc);
 }
