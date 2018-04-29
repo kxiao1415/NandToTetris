@@ -28,7 +28,8 @@ class CodeWriter:
         Opens the output file/stream and gets ready to
         write into it
         '''
-        self.jumpToFlag = 0
+        self.call_count = 0
+        self.bool_count = 0
         self.functionName = ''
         self.file = open(file, 'w')
         self.writeInit()
@@ -41,7 +42,6 @@ class CodeWriter:
         '''
         self.fileName = fileName
         print "translating file: %s"%(fileName)
-
 
     def decrementSP(self):
         '''
@@ -64,18 +64,12 @@ class CodeWriter:
         pops the top of the stack to the D register
         '''
         self.decrementSP()
-        self.file.write('@SP\n' +
-                        'A=M\n' +
+        self.file.write('A=M\n' +
                         'D=M\n')
 
 
-    def popToA(self):
-        '''
-        pops the top of the stack to the A register
-        '''
-        self.decrementSP()
+    def set_A_to_stack(self):
         self.file.write('@SP\n' +
-                        'A=M\n' +
                         'A=M\n')
 
 
@@ -86,7 +80,22 @@ class CodeWriter:
         self.file.write('@SP\n' +
                         'A=M\n' +
                         'M=D\n')
+
         self.incrementSP()
+
+
+    def from_stack_to_memory(self, segment, index):
+        self.file.write('@{}\n'.format(index) +
+                        'D=A\n' +
+                        '@{}\n'.format(segment) +
+                        'D=D+M\n' +
+                        '@R13\n' +
+                        'M=D\n')  # Store memory index where we want to store in R13
+        self.pushD()
+
+        self.file.write('@R13\n' +
+                        'A=M\n' +
+                        'M=D\n')
 
     
     def writeArithmetic(self, command):
@@ -96,49 +105,34 @@ class CodeWriter:
         '''
         if command in binary_ops:
             self.popToD()
-            self.popToA()
-            self.file.write('D=A%sD\n'%binary_ops[command])
-            self.pushD()
+            self.decrementSP()
+            self.set_A_to_stack()
+            self.file.write('M=M%sD\n'%binary_ops[command])
 
         elif command in unary_ops:
-            self.popToD()
-            self.file.write('D=%sD\n'%unary_ops[command])
-            self.pushD()
+            self.decrementSP()
+            self.set_A_to_stack()
+            self.file.write('M=%sM\n'%unary_ops[command])
 
         elif command in compares:
-            #(TRUE) and (FALSE) labels
-            true = 'TRUE${0}'.format(self.jumpToFlag)
-            false = 'FALSE${0}'.format(self.jumpToFlag)
-
-            if self.functionName:
-                true = self.functionName + '$' + true
-                false = self.functionName + '$' + false
-                
-            self.jumpToFlag += 1
-            
             self.popToD()
-            self.popToA()
-            self.file.write('D=A-D\n' +
-                            '@%s\n'%(true) +
-                            'D;%s\n' %(compares[command])) #goto (TRUE) if true
-            
-            #if false
-            self.file.write('@SP\n' +
-                            'A=M\n' +
-                            'M=0\n') # 0 is false
-            self.incrementSP()
-            self.file.write('@%s\n' %(false) +
-                            '0;JMP\n') #skip over (TRUE) clause
-            
-            #(TRUE)
-            self.file.write('(%s)\n'%(true) +
-                            '@SP\n' +
-                            'A=M\n' +
-                            'M=-1\n')
-            self.incrementSP()
-            
-            #(FALSE)
-            self.file.write('(%s)\n' %false)
+            self.decrementSP()
+            self.set_A_to_stack()
+            self.file.write('D=M-D\n' +
+                            '@BOOL_{}\n'.format(self.bool_count) +
+                            'D;{}\n'.format(compares[command]))
+            self.set_A_to_stack()
+            self.file.write('M=0\n' +
+                            '@ENDBOOL_{}\n'.format(self.bool_count) +
+                            '0;JMP\n' +
+                            '(BOOL_{})\n'.format(self.bool_count))
+            self.set_A_to_stack()
+            self.file.write('M=-1\n' +
+                            '(ENDBOOL_{})\n'.format(self.bool_count))
+
+            self.bool_count += 1
+
+        self.incrementSP()
 
 
     def writePushPop(self, command, segment, index):
@@ -151,13 +145,15 @@ class CodeWriter:
             if segment == 'constant':
                 self.file.write('@%s\n' %(index) +
                                 'D=A\n')
+
             elif segment in ('temp','pointer'):
-                self.file.write('@%d\n' %(Segments[segment] + int(index)) +
+                self.file.write('@R%d\n' %(Segments[segment] + int(index)) +
                                 'D=M\n')
+
             elif segment == 'static':
-                varName = self.fileName + '.' + index
+                varName = '{}_{}'.format(self.fileName, index)
                 self.file.write('@%s\n' %(varName) +
-                                'D=M\n')            
+                                'D=M\n')
             else:
                 self.file.write('@%s\n' %(Segments[segment]) +
                                 'D=M\n' +
@@ -169,34 +165,25 @@ class CodeWriter:
             self.pushD()
             
         elif command == 'pop':
-            
-            # stored the address of the varible segment+index into register R13
             if segment in ('temp','pointer'):
-                self.file.write('@%d\n' %(Segments[segment] + int(index)) +
-                                'D=A\n' +
-                                '@R13\n' +
-                                'M=D\n')
+                self.file.write('@R%d\n' %(Segments[segment] + int(index)))
             elif segment == 'static':
-                varName = self.fileName + '.' + index
-                self.file.write('@%s\n' %(varName) +
-                                'D=A\n' +
-                                '@R13\n' +
-                                'M=D\n')
+                varName = '{}_{}'.format(self.fileName, index)
+                self.file.write('@%s\n' %(varName))
             else:
                 self.file.write('@%s\n' %(Segments[segment]) +
                                 'D=M\n' +
                                 '@%s\n' %(index) +
-                                'D=D+A\n' +
-                                '@R13\n' +
-                                'M=D\n')
-                
-            # pop the stack to the D registert, then decrement the stack
-            self.popToD()
+                                'A=D+A\n')
 
-            # stored the value of D register into the address of the variable segment+index that is stored in register R13 
+            self.file.write('D=A\n' +
+                            '@R13\n' + # Store resolved address in R13
+                            'M=D\n')
+            self.popToD()
             self.file.write('@R13\n' +
                             'A=M\n' +
                             'M=D\n')
+
 
 
     def writeFunction(self, functionName, numLocals):
@@ -207,8 +194,9 @@ class CodeWriter:
         """
         self.functionName = functionName
         self.file.write('({0})\n'.format(functionName))
-        for i in range(numLocals):
-            self.writePushPop('push', 'constant', 0)
+        for i in range(int(numLocals)):
+            self.file.write('D=0\n')
+            self.pushD()
 
 
     def writeInit(self):
@@ -220,28 +208,17 @@ class CodeWriter:
 
 
     def writeLabel(self, label):
-        if self.functionName:
-            self.file.write('({0}${1})\n'.format(self.functionName, label))
-        else:
-            self.file.write('({0})\n'.format(label))
+        self.file.write('({0})\n'.format(label))
 
     def writeGoto(self, label):
-        if self.functionName:
-            self.file.write('@{0}${1}\n'.format(self.functionName, label))
-        else:
-            self.file.write('@{0}\n'.format(label))
-        self.file.write('0;JMP\n')
+        self.file.write('@{0}\n'.format(label) +
+                        '0;JMP\n')
 
 
     def writeIf(self, label):
         self.popToD()
-        
-        if self.functionName:
-            self.file.write('@{0}${1}\n'.format(self.functionName, label))
-        else:
-            self.file.write('@{0}\n'.format(label))
-            
-        self.file.write('D;JNE\n')
+        self.file.write('@{0}\n'.format(label) +
+                        'D;JNE\n')
 
 
     def writeReturn(self):
@@ -255,8 +232,11 @@ class CodeWriter:
                         'M=D\n')
         
         #RET = *(FRAME-5) //Put the return-address in a temp. var.
-        self.file.write('@5\n' +
-                        'A=D-A\n' +
+        self.file.write('@{}\n'.format(FRAME) +
+                        'D=M\n' +
+                        '@5\n' +
+                        'D=D-A\n' +
+                        'A=D\n' +
                         'D=M\n' +
                         '@{0}\n'.format(RET) +
                         'M=D\n')
@@ -268,40 +248,27 @@ class CodeWriter:
                         'M=D\n')
 
         #SP = ARG + 1 //Restore SP of the caller
-        self.file.write('D=A+1\n' +
+        self.file.write('@ARG\n' +
+                        'D=M\n' +
                         '@SP\n' +
-                        'M=D\n')
+                        'M=D+1\n')
 
-        #THAT = *(FRAME - 1) //Restore THAT of the caller
-        self.file.write('@{0}\n'.format(FRAME) +
-                        'A=M-1\n' +
-                        'D=M\n' +
-                        '@THAT\n' +
-                        'M=D\n')
-        #THIS = *(FRAME - 2) //Restore THIS of the caller
-        self.file.write('@{0}\n'.format(FRAME) +
-                        'D=M\n' +
-                        '@2\n' +
-                        'A=D-A\n' +
-                        'D=M\n' +
-                        '@THIS\n' +
-                        'M=D\n')
-        #ARG = *(FRAME -3) //Restore ARG of the caller
-        self.file.write('@{0}\n'.format(FRAME) +
-                        'D=M\n' +
-                        '@3\n' +
-                        'A=D-A\n' +
-                        'D=M\n' +
-                        '@ARG\n' +
-                        'M=D\n')
-        #LCL = *(FRAME -4) //Restore LCL of the caller
-        self.file.write('@{0}\n'.format(FRAME) +
-                        'D=M\n' +
-                        '@4\n' +
-                        'A=D-A\n' +
-                        'D=M\n' +
-                        '@LCL\n' +
-                        'M=D\n')
+        # THAT = *(FRAME-1)
+        # THIS = *(FRAME-2)
+        # ARG = *(FRAME-3)
+        # LCL = *(FRAME-4)
+        offset = 1
+        for address in ['@THAT', '@THIS', '@ARG', '@LCL']:
+            self.file.write('@{0}\n'.format(FRAME) +
+                            'D=M\n' +
+                            '@{}\n'.format(offset) +
+                            'D=D-A\n' + # Adjust address
+                            'A=D\n' + # Prepare to load value at address
+                            'D=M\n' + # Store value
+                            '{}\n'.format(address) +
+                            'M=D\n') # Save value
+            offset += 1
+
         #goto RET //Goto return-address (in the caller's code)
         self.file.write('@{0}\n'.format(RET) +
                         'A=M\n' +
@@ -313,13 +280,9 @@ class CodeWriter:
         LCL starts at numArgs + 5 away from the bottom of the FRAME
         The 5 spots are used for 1. return address 2. LCL 3. ARG 4. THIS 5. THAT
         """
-        offset = numArgs + 5
-
-        returnLabel = 'RETURN${0}'.format(self.jumpToFlag)       
-        if self.functionName:
-            returnLabel = '{0}${1}'.format(functionName, returnLabel)
+        returnLabel = 'RETURN_{0}_{1}'.format(functionName, self.call_count)
             
-        self.jumpToFlag += 1
+        self.call_count += 1
 
         #push return-address //(Using the label declared below)
         self.file.write('@{0}\n'.format(returnLabel) +
@@ -346,18 +309,16 @@ class CodeWriter:
                         'D=M\n')
         self.pushD()
 
-        #ARG = SP - n - 5 //Reposition ARG (n = number of args.)
-        self.file.write('@SP\n' +
-                        'D=M\n' +
-                        '@{0}\n'.format(offset) +
-                        'D=D-A\n' +
-                        '@ARG\n' +
-                        'M=D\n')
-        
         #LCL = SP //Reposition LCL
         self.file.write('@SP\n' +
                         'D=M\n' +
                         '@LCL\n' +
+                        'M=D\n')
+
+        #ARG = SP - n - 5 //Reposition ARG (n = number of args.)
+        self.file.write('@{}\n'.format(5+ int(numArgs)) +
+                        'D=D-A\n' +
+                        '@ARG\n' +
                         'M=D\n')
         
         #goto f //Transfer control
@@ -373,4 +334,3 @@ class CodeWriter:
         Closes the output file
         '''
         self.file.close()
-

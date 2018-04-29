@@ -1,5 +1,3 @@
-import re
-
 class Parser:
     def __init__(self, file):
         '''
@@ -10,27 +8,28 @@ class Parser:
         self.cleanFile = []
         
         preProcess = open(file, 'r')
-        for line in preProcess:
-            line = line.split(r'//')[0].rstrip()
+        for line in preProcess.readlines():
+            line = line.split('/')[0]
+            line = line.replace('\r\n', '').rstrip()
             if line:
                 self.cleanFile.append(line)
         preProcess.close()
 
-        
+
     def hasMoreCommands(self):
         '''
         Are there more commands in the input?
         '''
         return self.count < len(self.cleanFile)
 
-    
+
     def advance(self):
         '''
         Reads the next command from the input and makes it the current command
         '''
-        self.currentCommand = re.sub(r'\r\n', '', self.cleanFile[self.count])
+        self.currentCommand = self.cleanFile[self.count]
         self.count += 1
-        
+
 
     def commandType(self):
         '''
@@ -62,15 +61,17 @@ class Parser:
         '''
         Returns the first arg of the current command
         '''
+        if self.commandType() == 'C_RETURN':
+            return None
         if self.commandType() == 'C_ARITHMETIC':
-            return self.currentCommand
-        else:
-            return self.currentCommand.split()[1]
-        
+            return self.currentCommand.split(' ')[0]
+
+        return self.currentCommand.split(' ')[1]
+
 
     def arg2(self):
         '''
         Returns the second arg of the current command
         '''
-        return self.currentCommand.split()[2]
-        
+        if self.commandType() in ['C_PUSH', 'C_POP', 'C_CALL', 'C_FUNCTION']:
+            return self.currentCommand.split()[2]

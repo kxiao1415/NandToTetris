@@ -22,8 +22,8 @@ class VMTranslator(object):
             
             parser = Parser.Parser(os.path.join(dirVM, f))
                                    
-            while (parser.hasMoreCommands()):
-                # advance first since the currentcommand starts out empty
+            while parser.hasMoreCommands():
+                # advance first since the current command starts out empty
                 parser.advance()
 
                 print 'current command: ' + repr(parser.currentCommand)
